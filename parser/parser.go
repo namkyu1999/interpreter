@@ -17,6 +17,7 @@ var precedences = map[token.TokenType]int{
 	token.Minus:       Sum,
 	token.Slash:       Product,
 	token.Asterisk:    Product,
+	token.LeftBracket: Index,
 }
 
 func (p *Parser) peekPrecedence() int {
@@ -44,6 +45,7 @@ const (
 	Product     // *
 	Prefix      // -X or !X
 	Call        // myFunction(X)
+	Index       // array[index]
 )
 
 type (
@@ -83,6 +85,8 @@ func New(l *lexer.Lexer) *Parser {
 	p.registerPrefix(token.LeftParen, p.parseGroupedExpression)
 	p.registerPrefix(token.If, p.parseIfExpression)
 	p.registerPrefix(token.Function, p.parseFunctionLiteral)
+	p.registerPrefix(token.String, p.parseStringLiteral)
+	p.registerPrefix(token.LeftBracket, p.parseArrayLiteral)
 
 	p.infixParseFns = make(map[token.TokenType]infixParseFn)
 	p.registerInfix(token.Equal, p.parseInfixExpression)
@@ -94,13 +98,14 @@ func New(l *lexer.Lexer) *Parser {
 	p.registerInfix(token.Slash, p.parseInfixExpression)
 	p.registerInfix(token.Asterisk, p.parseInfixExpression)
 	p.registerInfix(token.LeftParen, p.parseCallExpression)
+	p.registerInfix(token.LeftBracket, p.parseIndexExpression)
 	return p
 }
 
 func (p *Parser) parseCallExpression(function ast.Expression) ast.Expression {
 	// Create the AST node
 	exp := &ast.CallExpression{Token: p.curToken, Function: function}
-	exp.Arguments = p.parseCallArguments()
+	exp.Arguments = p.parseExpressionList(token.RightParen)
 	return exp
 }
 
@@ -510,4 +515,70 @@ func (p *Parser) noPrefixParseFnError(t token.TokenType) {
 	// Add an error to the parser errors
 	msg := fmt.Sprintf("no prefix parse function for %s found", t)
 	p.errors = append(p.errors, msg)
+}
+
+func (p *Parser) parseStringLiteral() ast.Expression {
+	// Create the AST node
+	return &ast.StringLiteral{Token: p.curToken, Value: p.curToken.Literal}
+}
+
+func (p *Parser) parseArrayLiteral() ast.Expression {
+	// Create the AST node
+	array := &ast.ArrayLiteral{Token: p.curToken}
+
+	// Parse the elements
+	array.Elements = p.parseExpressionList(token.RightBracket)
+
+	return array
+}
+
+func (p *Parser) parseExpressionList(end token.TokenType) []ast.Expression {
+	// Create the AST node
+	list := []ast.Expression{}
+
+	// If the next token is the end token, return the list
+	if p.peekTokenIs(end) {
+		// Advance to the next token
+		p.nextToken()
+		return list
+	}
+
+	// Advance to the next token
+	p.nextToken()
+
+	// Parse the first expression
+	list = append(list, p.parseExpression(Lowest))
+
+	for p.peekTokenIs(token.Comma) {
+		// Advance to the next token
+		p.nextToken()
+		// Advance to the next token
+		p.nextToken()
+		list = append(list, p.parseExpression(Lowest))
+	}
+
+	// Expect the end token
+	if !p.expectPeek(end) {
+		return nil
+	}
+
+	return list
+}
+
+func (p *Parser) parseIndexExpression(left ast.Expression) ast.Expression {
+	// Create the AST node
+	exp := &ast.IndexExpression{Token: p.curToken, Left: left}
+
+	// Advance to the next token
+	p.nextToken()
+
+	// Parse the index
+	exp.Index = p.parseExpression(Lowest)
+
+	// Expect a right bracket
+	if !p.expectPeek(token.RightBracket) {
+		return nil
+	}
+
+	return exp
 }
